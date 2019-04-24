@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"math/big"
 	"net/http"
+	"os"
 	"regexp"
 	"time"
 
@@ -16,12 +18,26 @@ import (
 	"github.com/google/certificate-transparency/go/scanner"
 )
 
+type LogEntryJSON struct {
+	Index       int64           `json:"index"`
+	Timestamp   uint64          `json:"timestamp"`
+	EntryType   uint64          `json:"entry_type"`
+	Certificate CertificateJSON `json:"certificate"`
+}
+
+type CertificateJSON struct {
+	Subject string `json:"domain"`
+	Issuer  string `json:"issuer"`
+	Chain   string `json:"chain"`
+}
+
 const (
 	// matchesNothingRegex is a regex which cannot match any input.
 	matchesNothingRegex = "a^"
 )
 
-var logURI = flag.String("log_uri", "http://ct.googleapis.com/aviator", "CT log base URI")
+//var logURI = flag.String("log_uri", "http://ct.googleapis.com/aviator", "CT log base URI")
+var logURI = flag.String("log_uri", "http://ct.googleapis.com/pilot", "CT log base URI")
 var matchSubjectRegex = flag.String("match_subject_regex", ".*", "Regex to match CN/SAN")
 var matchIssuerRegex = flag.String("match_issuer_regex", "", "Regex to match in issuer CN")
 var precertsOnly = flag.Bool("precerts_only", false, "Only match precerts")
@@ -57,7 +73,35 @@ func chainToString(certs []ct.ASN1Cert) string {
 }
 
 func logFullChain(entry *ct.LogEntry) {
-	log.Printf("Index %d: Chain: %s", entry.Index, chainToString(entry.Chain))
+	//log.Printf("Index %d: Chain: %s", entry.Index, chainToString(entry.Chain))
+	record := LogEntryJSON{
+		Index:     entry.Index,
+		Timestamp: entry.Leaf.TimestampedEntry.Timestamp,
+		EntryType: uint64(entry.Leaf.LeafType),
+		Certificate: CertificateJSON{
+			Subject: entry.X509Cert.Subject.CommonName,
+			Issuer:  entry.X509Cert.Issuer.CommonName,
+			Chain:   chainToString(entry.Chain),
+		},
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.Encode(record)
+}
+
+func logFullPrecertChain(entry *ct.LogEntry) {
+	//log.Printf("Index %d: Chain: %s", entry.Index, chainToString(entry.Chain))
+	record := LogEntryJSON{
+		Index:     entry.Index,
+		Timestamp: entry.Leaf.TimestampedEntry.Timestamp,
+		EntryType: uint64(entry.Leaf.LeafType),
+		Certificate: CertificateJSON{
+			Subject: entry.Precert.TBSCertificate.Subject.CommonName,
+			Issuer:  entry.Precert.TBSCertificate.Issuer.CommonName,
+			Chain:   chainToString(entry.Chain),
+		},
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.Encode(record)
 }
 
 func createRegexes(regexValue string) (*regexp.Regexp, *regexp.Regexp) {
@@ -129,7 +173,7 @@ func main() {
 	scanner := scanner.NewScanner(logClient, opts)
 
 	if *printChains {
-		scanner.Scan(logFullChain, logFullChain)
+		scanner.Scan(logFullChain, logFullPrecertChain)
 	} else {
 		scanner.Scan(logCertInfo, logPrecertInfo)
 	}
